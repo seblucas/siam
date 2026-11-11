@@ -7,6 +7,7 @@ import {
   coordinates,
   getLegalActions,
   isEdge,
+  inwardDirections,
   type Direction,
   type GameAction,
   type GameState,
@@ -91,8 +92,9 @@ function pushPotential(state: GameState, player: Player): number {
       if (row !== 0 && row !== BOARD_SIZE - 1 && col !== 0 && col !== BOARD_SIZE - 1) continue
       if (state.variants.openingSquares && state.turnsTaken[player] < 2 && col === 2 && (row === 0 || row === BOARD_SIZE - 1)) continue
       if (state.board[index] === null) continue
-      const inward = row === 0 ? 'south' : row === BOARD_SIZE - 1 ? 'north' : col === 0 ? 'east' : 'west'
-      considerPush(index, inward, player)
+      for (const inward of inwardDirections(index)) {
+        considerPush(index, inward, player)
+      }
     }
   }
   return best

@@ -140,12 +140,14 @@ function step(index: number, direction: Direction): number | null {
   return indexAt(row + delta.row, col + delta.col)
 }
 
-function inwardDirection(index: number): Direction {
+export function inwardDirections(index: number): Direction[] {
   const { row, col } = coordinates(index)
-  if (row === 0) return 'south'
-  if (row === BOARD_SIZE - 1) return 'north'
-  if (col === 0) return 'east'
-  return 'west'
+  const directions: Direction[] = []
+  if (row === 0) directions.push('south')
+  if (row === BOARD_SIZE - 1) directions.push('north')
+  if (col === 0) directions.push('east')
+  if (col === BOARD_SIZE - 1) directions.push('west')
+  return directions
 }
 
 function pushChain(
@@ -278,15 +280,14 @@ export function enterAnimal(
   let winner: Player | null = null
 
   if (target) {
-    const inward = inwardDirection(destination)
-    if (facing !== inward) {
+    if (!inwardDirections(destination).includes(facing)) {
       throw new IllegalActionError('Pour entrer en poussant, orientez votre animal vers l’intérieur du plateau.')
     }
     const stateWithReserveUsed = {
       ...state,
       reserves: { ...state.reserves, [player]: state.reserves[player] - 1 },
     }
-    const pushed = pushChain(stateWithReserveUsed, player, destination, inward, facing)
+    const pushed = pushChain(stateWithReserveUsed, player, destination, facing, facing)
     board = pushed.board
     reserves = pushed.reserves
     winner = pushed.winner
@@ -377,7 +378,9 @@ export function getLegalActions(state: GameState): GameAction[] {
     for (let destination = 0; destination < BOARD_CELLS; destination += 1) {
       if (!isEdge(destination)) continue
       if (state.board[destination]) {
-        tryAdd({ type: 'enter', to: destination, facing: inwardDirection(destination) })
+        for (const facing of inwardDirections(destination)) {
+          tryAdd({ type: 'enter', to: destination, facing })
+        }
       } else {
         for (const facing of DIRECTIONS) tryAdd({ type: 'enter', to: destination, facing })
       }

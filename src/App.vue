@@ -9,6 +9,7 @@ import {
   PLAYER_NAMES,
   applyGameAction,
   createGame,
+  getLegalActions,
   isEdge,
   isOpeningSquare,
   type Direction,
@@ -40,6 +41,15 @@ const currentPlayer = computed(() => game.value.turn)
 const botPlayer = computed<Player>(() => humanPlayer.value === 'elephant' ? 'rhino' : 'elephant')
 const isHumanTurn = computed(() => mode.value === 'local' || currentPlayer.value === humanPlayer.value)
 const recentMoves = computed(() => [...game.value.history].reverse())
+const legalEntryCells = computed(() => {
+  if (selection.value?.kind !== 'reserve') return new Set<number>()
+  return new Set(
+    getLegalActions(game.value)
+      .filter((action): action is Extract<GameAction, { type: 'enter' }> =>
+        action.type === 'enter' && action.facing === chosenFacing.value)
+      .map((action) => action.to),
+  )
+})
 const replayText = computed(() => {
   const totals = moveTimings.value.reduce(
     (result, move) => {
@@ -278,7 +288,7 @@ function isSelected(index: number): boolean {
 }
 
 function isEntryCell(index: number): boolean {
-  return selection.value?.kind === 'reserve' && isEdge(index) && !pieceAt(index)
+  return legalEntryCells.value.has(index)
 }
 
 function canRotate(): boolean {

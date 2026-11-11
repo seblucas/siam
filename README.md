@@ -22,6 +22,7 @@ npm run build
 
 - Plateau de 5 × 5, trois rochers au centre, cinq animaux par joueur ; les Éléphants commencent.
 - À son tour, un joueur effectue une action : faire entrer un animal depuis le bord, avancer d’une case orthogonale, orienter un animal sur place, récupérer un animal situé sur le bord, ou avancer en poussant une chaîne de pièces.
+- Une entrée sur une case de bord occupée pousse vers l’intérieur ; depuis un coin, le joueur choisit l’un des deux côtés intérieurs.
 - L’orientation est libre pendant un déplacement simple. Une poussée n’est possible que vers l’avant de l’animal qui l’initie ; aucun animal ne change d’orientation pendant celle-ci.
 - Les animaux alignés dans le sens de la poussée fournissent la force ; les animaux orientés à l’opposé l’annulent. Les animaux non opposés peuvent être poussés. Chaque rocher exige une force nette d’au moins un animal. Les animaux éjectés sont remis en réserve.
 - Si un rocher quitte le plateau, la partie s’arrête. Le vainqueur est le joueur dont l’animal le plus proche du rocher éjecté est orienté dans le sens de la poussée.

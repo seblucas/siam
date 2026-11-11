@@ -157,6 +157,17 @@ describe('Siam game rules', () => {
     expect(next.board[5]).toEqual({ kind: 'animal', owner: 'rhino', facing: 'south' })
   })
 
+  it('allows entering an occupied corner from either inward side', () => {
+    const state = stateWithPieces({ 0: { kind: 'rock' } })
+    const eastEntry = { type: 'enter', to: 0, facing: 'east' } as const
+    const southEntry = { type: 'enter', to: 0, facing: 'south' } as const
+
+    expect(getLegalActions(state)).toContainEqual(eastEntry)
+    expect(getLegalActions(state)).toContainEqual(southEntry)
+    expect(enterAnimal(state, 0, 'east').board[1]).toEqual({ kind: 'rock' })
+    expect(enterAnimal(state, 0, 'south').board[5]).toEqual({ kind: 'rock' })
+  })
+
   it('returns an animal from the edge to its reserve', () => {
     const state = stateWithPieces({ 0: { kind: 'animal', owner: 'elephant', facing: 'south' } })
     const next = returnAnimal(state, 0)
