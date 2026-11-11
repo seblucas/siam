@@ -1,32 +1,72 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { actionDescription, chooseBotAction, type BotDifficulty } from './ai'
 import {
   BOARD_CELLS,
   BOARD_SIZE,
-  DIRECTIONS,
   DIRECTION_ARROWS,
+  DIRECTIONS,
   PLAYER_NAMES,
+  applyGameAction,
   createGame,
-  enterAnimal,
   isEdge,
   isOpeningSquare,
-  moveAnimal,
-  returnAnimal,
-  rotateAnimal,
   type Direction,
+  type GameAction,
   type GameState,
+  type Player,
   type VariantOptions,
 } from './game'
 
 type Selection = { kind: 'animal'; index: number } | { kind: 'reserve' } | null
+type GameMode = 'local' | 'bot'
 
 const variants = ref<VariantOptions>({ openingSquares: false, oneReturnPerPlayer: false })
 const game = ref<GameState>(createGame())
+const mode = ref<GameMode>('local')
+const difficulty = ref<BotDifficulty>('medium')
+const humanPlayer = ref<Player>('elephant')
 const selection = ref<Selection>(null)
 const chosenFacing = ref<Direction>('south')
 const notice = ref('Choisissez un animal en réserve pour le faire entrer.')
+const botThinking = ref(false)
+const botReason = ref('')
+const moveTimings = ref<Array<{ player: Player; thinkingTimeMs: number }>>([])
+let botTurnToken = 0
+let botTimer: number | undefined
+let turnStartedAt = performance.now()
 
 const currentPlayer = computed(() => game.value.turn)
+const botPlayer = computed<Player>(() => humanPlayer.value === 'elephant' ? 'rhino' : 'elephant')
+const isHumanTurn = computed(() => mode.value === 'local' || currentPlayer.value === humanPlayer.value)
+const recentMoves = computed(() => [...game.value.history].reverse())
+const replayText = computed(() => {
+  const totals = moveTimings.value.reduce(
+    (result, move) => {
+      result[move.player] += move.thinkingTimeMs
+      return result
+    },
+    { elephant: 0, rhino: 0 },
+  )
+
+  return JSON.stringify({
+    format: 'siam-replay-v1',
+    initialPosition: 'standard',
+    mode: mode.value,
+    bot: mode.value === 'bot'
+      ? { difficulty: difficulty.value, humanPlayer: humanPlayer.value, botPlayer: botPlayer.value }
+      : null,
+    variants: game.value.variants,
+    winner: game.value.winner,
+    timing: { unit: 'milliseconds', totals },
+    moves: game.value.history.map(({ turn, player, action }, index) => ({
+      turn,
+      player,
+      action,
+      thinkingTimeMs: moveTimings.value[index]?.thinkingTimeMs ?? null,
+    })),
+  }, null, 2)
+})
 const selectedAnimal = computed(() => {
   if (selection.value?.kind !== 'animal') return null
   const piece = game.value.board[selection.value.index]
@@ -39,20 +79,83 @@ const canReturnSelected = computed(() =>
 )
 
 function startNewGame(): void {
+  cancelBotTurn()
   game.value = createGame(variants.value)
+  moveTimings.value = []
+  turnStartedAt = performance.now()
   selection.value = null
   chosenFacing.value = 'south'
+  botReason.value = ''
   notice.value = 'La partie commence. Les Éléphants jouent en premier.'
+  scheduleBotTurn()
 }
 
+watch(() => game.value.turn, (player) => {
+  chosenFacing.value = player === 'elephant' ? 'south' : 'north'
+})
+
 watch(
-  () => game.value.turn,
-  (player) => {
-    chosenFacing.value = player === 'elephant' ? 'south' : 'north'
+  () => [mode.value, humanPlayer.value, difficulty.value, game.value.turn, game.value.winner, game.value.history.length],
+  () => {
+    turnStartedAt = performance.now()
+    scheduleBotTurn()
   },
 )
 
+function recordAction(action: GameAction, thinkingTimeMs = performance.now() - turnStartedAt): void {
+  const player = game.value.turn
+  const next = applyGameAction(game.value, action)
+  moveTimings.value.push({ player, thinkingTimeMs: Math.max(0, Math.round(thinkingTimeMs)) })
+  game.value = next
+  turnStartedAt = performance.now()
+}
+
+function cancelBotTurn(): void {
+  botTurnToken += 1
+  if (botTimer !== undefined) window.clearTimeout(botTimer)
+  botTimer = undefined
+  botThinking.value = false
+}
+
+function scheduleBotTurn(): void {
+  cancelBotTurn()
+  if (mode.value !== 'bot' || game.value.winner || currentPlayer.value !== botPlayer.value) return
+
+  const token = botTurnToken
+  botThinking.value = true
+  botReason.value = ''
+  selection.value = null
+  notice.value = 'Le bot analyse le plateau…'
+  botTimer = window.setTimeout(() => {
+    if (token !== botTurnToken) return
+    try {
+      const thinkingStartedAt = performance.now()
+      const choice = chooseBotAction(game.value, difficulty.value)
+      const thinkingTimeMs = performance.now() - thinkingStartedAt
+      if (!choice) {
+        notice.value = 'Le bot ne trouve aucun coup légal.'
+        return
+      }
+      recordAction(choice.action, thinkingTimeMs)
+      const next = game.value
+      botReason.value = choice.reason
+      notice.value = next.winner
+        ? `${PLAYER_NAMES[next.winner]} remportent la partie !`
+        : `Le bot joue : ${actionDescription(choice.action)}.`
+    } catch (error) {
+      console.error('Échec du tour du bot.', error)
+      notice.value = error instanceof Error ? `Le bot n’a pas pu jouer : ${error.message}` : 'Le bot n’a pas pu jouer.'
+    } finally {
+      botThinking.value = false
+      botTimer = undefined
+    }
+  }, 350)
+}
+
+onBeforeUnmount(cancelBotTurn)
+
 function selectReserve(): void {
+  if (!isHumanTurn.value || botThinking.value) return
   if (game.value.winner) return
   if (game.value.reserves[currentPlayer.value] === 0) {
     notice.value = 'Vous n’avez plus d’animal en réserve.'
@@ -64,10 +167,11 @@ function selectReserve(): void {
 }
 
 function selectCell(index: number): void {
+  if (!isHumanTurn.value || botThinking.value) return
   if (game.value.winner) return
   if (selection.value?.kind === 'reserve') {
     try {
-      game.value = enterAnimal(game.value, index, chosenFacing.value)
+      recordAction({ type: 'enter', to: index, facing: chosenFacing.value })
       selection.value = null
       notice.value = game.value.winner
         ? `${PLAYER_NAMES[game.value.winner]} remportent la partie !`
@@ -84,7 +188,12 @@ function selectCell(index: number): void {
       return
     }
     try {
-      game.value = moveAnimal(game.value, selection.value.index, index, chosenFacing.value)
+      recordAction({
+        type: 'move',
+        from: selection.value.index,
+        to: index,
+        facing: chosenFacing.value,
+      })
       selection.value = null
       notice.value = game.value.winner
         ? `${PLAYER_NAMES[game.value.winner]} remportent la partie !`
@@ -115,9 +224,10 @@ function messageForError(error: unknown): string {
 }
 
 function playRotation(): void {
+  if (!isHumanTurn.value || botThinking.value) return
   if (selection.value?.kind !== 'animal') return
   try {
-    game.value = rotateAnimal(game.value, selection.value.index, chosenFacing.value)
+    recordAction({ type: 'rotate', at: selection.value.index, facing: chosenFacing.value })
     selection.value = null
     notice.value = 'Orientation modifiée. À l’autre joueur.'
   } catch (error) {
@@ -126,9 +236,10 @@ function playRotation(): void {
 }
 
 function playReturn(): void {
+  if (!isHumanTurn.value || botThinking.value) return
   if (selection.value?.kind !== 'animal') return
   try {
-    game.value = returnAnimal(game.value, selection.value.index)
+    recordAction({ type: 'return', at: selection.value.index })
     selection.value = null
     notice.value = 'Animal récupéré en réserve. À l’autre joueur.'
   } catch (error) {
@@ -174,6 +285,47 @@ function canRotate(): boolean {
   return Boolean(selectedAnimal.value && selectedAnimal.value.facing !== chosenFacing.value)
 }
 
+function formatCell(index: number): string {
+  return `${String.fromCharCode(65 + (index % BOARD_SIZE))}${Math.floor(index / BOARD_SIZE) + 1}`
+}
+
+function formatAction(action: GameAction): string {
+  const directionNames: Record<Direction, string> = {
+    north: 'nord',
+    east: 'est',
+    south: 'sud',
+    west: 'ouest',
+  }
+  switch (action.type) {
+    case 'enter':
+      return `Entrée en ${formatCell(action.to)}, orienté ${directionNames[action.facing]}`
+    case 'move':
+      return `Déplacement ${formatCell(action.from)} → ${formatCell(action.to)}, orienté ${directionNames[action.facing]}`
+    case 'rotate':
+      return `Rotation en ${formatCell(action.at)}, vers ${directionNames[action.facing]}`
+    case 'return':
+      return `Récupération en ${formatCell(action.at)}`
+  }
+}
+
+function playerDisplayName(player: Player): string {
+  if (mode.value === 'bot' && player === botPlayer.value) return `Bot (${PLAYER_NAMES[player]})`
+  return PLAYER_NAMES[player]
+}
+
+async function copyReplay(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(replayText.value)
+    notice.value = 'Déroulé complet copié. Vous pouvez le coller dans votre message.'
+  } catch (error) {
+    console.error('Impossible de copier le déroulé dans le presse-papiers.', error)
+    notice.value = 'Copie automatique impossible : sélectionnez et copiez le texte du déroulé ci-dessous.'
+    const transcript = document.querySelector<HTMLTextAreaElement>('.replay-text')
+    transcript?.focus()
+    transcript?.select()
+  }
+}
+
 </script>
 
 <template>
@@ -187,7 +339,7 @@ function canRotate(): boolean {
     </header>
 
     <section class="intro">
-      <p class="eyebrow">Jeu de stratégie · 2 joueurs</p>
+      <p class="eyebrow">Jeu de stratégie · {{ mode === 'bot' ? 'contre le bot' : '2 joueurs' }}</p>
       <h1>La terre tremble.<br /><span>À vous de pousser.</span></h1>
       <p class="intro-copy">
         Déplacez éléphants et rhinocéros, repoussez les montagnes et faites sortir un rocher du
@@ -195,15 +347,41 @@ function canRotate(): boolean {
       </p>
     </section>
 
+    <section class="game-settings" aria-label="Configuration de la partie">
+      <label class="setting-field">
+        <span>Mode de jeu</span>
+        <select v-model="mode" @change="startNewGame">
+          <option value="local">Deux joueurs</option>
+          <option value="bot">Contre le bot</option>
+        </select>
+      </label>
+      <label v-if="mode === 'bot'" class="setting-field">
+        <span>Niveau du bot</span>
+        <select v-model="difficulty">
+          <option value="easy">Facile</option>
+          <option value="medium">Moyen · explique ses coups</option>
+          <option value="hard">Difficile</option>
+        </select>
+      </label>
+      <label v-if="mode === 'bot'" class="setting-field">
+        <span>Vous jouez</span>
+        <select v-model="humanPlayer" @change="startNewGame">
+          <option value="elephant">Éléphants · premier joueur</option>
+          <option value="rhino">Rhinocéros · second joueur</option>
+        </select>
+      </label>
+      <p v-if="mode === 'bot'" class="bot-mode-note">Partie locale, sans connexion. Le niveau moyen détaille les raisons de ses décisions.</p>
+    </section>
+
     <section class="game-layout" aria-label="Partie de Siam">
       <div class="game-area">
         <div class="turn-banner" :class="`turn-${currentPlayer}`">
           <div class="turn-symbol">{{ currentPlayer === 'elephant' ? '🐘' : '🦏' }}</div>
           <div class="turn-copy">
-            <span>{{ game.winner ? 'Partie terminée' : 'À vous de jouer' }}</span>
+            <span>{{ game.winner ? 'Partie terminée' : botThinking ? 'Le bot réfléchit' : isHumanTurn ? 'À vous de jouer' : 'Tour du bot' }}</span>
             <strong>{{ game.winner ? PLAYER_NAMES[game.winner] + ' gagnent !' : PLAYER_NAMES[currentPlayer] }}</strong>
           </div>
-          <span class="turn-pill">{{ game.winner ? 'Victoire' : 'Joueur ' + (currentPlayer === 'elephant' ? '1' : '2') }}</span>
+          <span class="turn-pill">{{ game.winner ? 'Victoire' : mode === 'bot' && currentPlayer === botPlayer ? 'BOT' : 'Joueur ' + (currentPlayer === 'elephant' ? '1' : '2') }}</span>
         </div>
 
         <div class="board-frame">
@@ -227,6 +405,7 @@ function canRotate(): boolean {
                 }"
                 type="button"
                 role="gridcell"
+                :disabled="!isHumanTurn || botThinking || Boolean(game.winner)"
                 :aria-label="cellLabel(index - 1)"
                 @click="selectCell(index - 1)"
               >
@@ -263,6 +442,10 @@ function canRotate(): boolean {
           <span class="status-icon">✳</span>
           <span>{{ notice }}</span>
         </div>
+        <div v-if="mode === 'bot' && botReason" class="bot-explanation">
+          <span class="explanation-icon">✦</span>
+          <p><strong>Pourquoi ce coup ?</strong>{{ botReason }}</p>
+        </div>
 
         <section class="controls-panel" aria-label="Actions">
           <div class="controls-heading">
@@ -270,7 +453,7 @@ function canRotate(): boolean {
               <p class="eyebrow">Votre tour</p>
               <h2>Quelle sera votre action ?</h2>
             </div>
-            <button v-if="selection" class="quiet-button" type="button" @click="cancelSelection">Annuler</button>
+            <button v-if="selection" class="quiet-button" type="button" :disabled="!isHumanTurn || botThinking" @click="cancelSelection">Annuler</button>
           </div>
 
           <div v-if="selectedAnimal" class="selected-actions">
@@ -284,19 +467,20 @@ function canRotate(): boolean {
                   :class="{ 'direction-active': chosenFacing === direction }"
                   :aria-label="`Orienter vers ${direction}`"
                   :aria-pressed="chosenFacing === direction"
+                  :disabled="!isHumanTurn || botThinking"
                   @click="chosenFacing = direction"
                 >{{ DIRECTION_ARROWS[direction] }}</button>
               </div>
               <small>Vous pouvez changer de direction en vous déplaçant.</small>
             </div>
             <div class="action-buttons">
-              <button class="action-button action-primary" type="button" @click="notice = 'Cliquez sur une case voisine pour déplacer ou pousser.'">
+              <button class="action-button action-primary" type="button" :disabled="!isHumanTurn || botThinking" @click="notice = 'Cliquez sur une case voisine pour déplacer ou pousser.'">
                 <span>↗</span> Déplacer / pousser
               </button>
-              <button class="action-button" type="button" :disabled="!canRotate()" @click="playRotation">
+              <button class="action-button" type="button" :disabled="!canRotate() || !isHumanTurn || botThinking" @click="playRotation">
                 <span>⟳</span> Tourner sur place
               </button>
-              <button v-if="canReturnSelected" class="action-button" type="button" @click="playReturn">
+              <button v-if="canReturnSelected" class="action-button" type="button" :disabled="!isHumanTurn || botThinking" @click="playReturn">
                 <span>↙</span> Récupérer
               </button>
             </div>
@@ -313,6 +497,7 @@ function canRotate(): boolean {
                   :class="{ 'direction-active': chosenFacing === direction }"
                   :aria-label="`Orienter vers ${direction}`"
                   :aria-pressed="chosenFacing === direction"
+                  :disabled="!isHumanTurn || botThinking"
                   @click="chosenFacing = direction"
                 >{{ DIRECTION_ARROWS[direction] }}</button>
               </div>
@@ -322,7 +507,7 @@ function canRotate(): boolean {
           </div>
 
           <div v-else class="action-buttons action-buttons-start">
-            <button class="action-button action-primary" type="button" @click="selectReserve">
+            <button class="action-button action-primary" type="button" :disabled="!isHumanTurn || botThinking" @click="selectReserve">
               <span>＋</span> Faire entrer un animal
               <small>{{ game.reserves[currentPlayer] }} en réserve</small>
             </button>
@@ -335,7 +520,7 @@ function canRotate(): boolean {
         <section class="player-card" :class="{ 'player-active': currentPlayer === 'elephant' }">
           <div class="player-avatar avatar-elephant">🐘</div>
           <div class="player-details">
-            <span>Joueur 1 · Blanc</span>
+            <span>{{ mode === 'bot' && botPlayer === 'elephant' ? 'Bot · Blanc' : 'Joueur 1 · Blanc' }}</span>
             <strong>Éléphants</strong>
             <small>{{ game.reserves.elephant }} {{ game.reserves.elephant > 1 ? 'animaux' : 'animal' }} en réserve</small>
           </div>
@@ -344,7 +529,7 @@ function canRotate(): boolean {
         <section class="player-card" :class="{ 'player-active': currentPlayer === 'rhino' }">
           <div class="player-avatar avatar-rhino">🦏</div>
           <div class="player-details">
-            <span>Joueur 2 · Sombre</span>
+            <span>{{ mode === 'bot' && botPlayer === 'rhino' ? 'Bot · Sombre' : 'Joueur 2 · Sombre' }}</span>
             <strong>Rhinocéros</strong>
             <small>{{ game.reserves.rhino }} {{ game.reserves.rhino > 1 ? 'animaux' : 'animal' }} en réserve</small>
           </div>
@@ -377,12 +562,27 @@ function canRotate(): boolean {
         </details>
 
         <section class="history-card">
-          <div class="section-title"><span>03</span><h2>Derniers coups</h2></div>
+          <div class="history-heading">
+            <div class="section-title"><span>03</span><h2>Derniers coups</h2></div>
+            <button class="copy-replay-button" type="button" :disabled="game.history.length === 0" @click="copyReplay">
+              Copier la partie
+            </button>
+          </div>
           <ol class="move-history">
-            <li v-for="(entry, index) in game.log" :key="`${index}-${entry}`">
-              <span>{{ String(game.log.length - index).padStart(2, '0') }}</span>{{ entry }}
+            <li v-for="record in recentMoves" :key="record.turn">
+              <span>{{ String(record.turn).padStart(2, '0') }}</span>
+              <div>
+                <strong>{{ playerDisplayName(record.player) }}</strong>
+                <small>{{ formatAction(record.action) }}</small>
+              </div>
             </li>
           </ol>
+          <p v-if="game.history.length === 0" class="empty-history">Les coups joués apparaîtront ici.</p>
+          <details class="replay-details">
+            <summary>Voir / copier le déroulé complet ({{ game.history.length }} coups)</summary>
+            <textarea class="replay-text" :value="replayText" readonly rows="9" aria-label="Déroulé complet au format JSON"></textarea>
+            <p>Copiez ce relevé avec le bouton ci-dessus pour que la partie puisse être rejouée pas à pas.</p>
+          </details>
         </section>
       </aside>
     </section>

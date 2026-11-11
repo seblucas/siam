@@ -10,6 +10,26 @@ export type VariantOptions = {
   oneReturnPerPlayer: boolean
 }
 
+export type GameAction =
+  | { type: 'enter'; to: number; facing: Direction }
+  | { type: 'move'; from: number; to: number; facing: Direction }
+  | { type: 'rotate'; at: number; facing: Direction }
+  | { type: 'return'; at: number }
+
+export type MoveRecord = {
+  turn: number
+  player: Player
+  action: GameAction
+  summary: string
+}
+
+export class IllegalActionError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'IllegalActionError'
+  }
+}
+
 export type GameState = {
   board: Array<Piece | null>
   reserves: Record<Player, number>
@@ -19,6 +39,7 @@ export type GameState = {
   winner: Player | null
   variants: VariantOptions
   log: string[]
+  history: MoveRecord[]
 }
 
 export const DIRECTIONS: Direction[] = ['north', 'east', 'south', 'west']
@@ -62,6 +83,7 @@ export function createGame(variants: VariantOptions = {
     winner: null,
     variants: { ...variants },
     log: ['La partie commence. Les Éléphants jouent en premier.'],
+    history: [],
   }
 }
 
@@ -85,7 +107,7 @@ export function isOpeningSquare(index: number): boolean {
 }
 
 function assertCanPlay(state: GameState): Player {
-  if (state.winner) throw new Error('La partie est terminée. Lancez une nouvelle partie.')
+  if (state.winner) throw new IllegalActionError('La partie est terminée. Lancez une nouvelle partie.')
   return state.turn
 }
 
@@ -95,17 +117,18 @@ function assertOpeningAllowed(state: GameState, player: Player, destination: num
     state.turnsTaken[player] < 2 &&
     isOpeningSquare(destination)
   ) {
-    throw new Error('Pendant vos deux premiers tours, cette case est interdite.')
+    throw new IllegalActionError('Pendant vos deux premiers tours, cette case est interdite.')
   }
 }
 
-function finishTurn(state: GameState, player: Player, message: string): GameState {
+function finishTurn(state: GameState, player: Player, action: GameAction, message: string): GameState {
   const next = {
     ...state,
     reserves: { ...state.reserves },
     turnsTaken: { ...state.turnsTaken, [player]: state.turnsTaken[player] + 1 },
     returnsUsed: { ...state.returnsUsed },
     log: [message, ...state.log].slice(0, 12),
+    history: [...state.history, { turn: state.history.length + 1, player, action, summary: message }],
   }
   if (!next.winner) next.turn = opponentOf(player)
   return next
@@ -150,7 +173,7 @@ function pushChain(
   const rockCount = chain.filter((index) => state.board[index]?.kind === 'rock').length
 
   if (force < Math.max(1, rockCount)) {
-    throw new Error('Poussée impossible : les forces en présence ne sont pas suffisantes.')
+    throw new IllegalActionError('Poussée impossible : les forces en présence ne sont pas suffisantes.')
   }
 
   const board = [...state.board]
@@ -196,14 +219,14 @@ export function moveAnimal(
   const player = assertCanPlay(state)
   const animal = state.board[from]
   if (!animal || animal.kind !== 'animal' || animal.owner !== player) {
-    throw new Error('Sélectionnez un de vos animaux.')
+    throw new IllegalActionError('Sélectionnez un de vos animaux.')
   }
   const fromCoordinates = coordinates(from)
   const toCoordinates = coordinates(to)
   const rowDistance = toCoordinates.row - fromCoordinates.row
   const colDistance = toCoordinates.col - fromCoordinates.col
   if (Math.abs(rowDistance) + Math.abs(colDistance) !== 1) {
-    throw new Error('Un animal se déplace d’une seule case, sans diagonale.')
+    throw new IllegalActionError('Un animal se déplace d’une seule case, sans diagonale.')
   }
   assertOpeningAllowed(state, player, to)
 
@@ -217,8 +240,8 @@ export function moveAnimal(
   let winner: Player | null = null
 
   if (target) {
-    if (newFacing !== direction) {
-      throw new Error('Pour pousser, votre animal doit regarder dans le sens du déplacement.')
+    if (animal.facing !== direction || newFacing !== direction) {
+      throw new IllegalActionError('Pour pousser, votre animal doit regarder dans le sens du déplacement.')
     }
     const pushed = pushChain(state, player, to, direction, newFacing)
     board = pushed.board
@@ -233,6 +256,7 @@ export function moveAnimal(
   const next = finishTurn(
     { ...state, board, reserves, winner },
     player,
+    { type: 'move', from, to, facing: newFacing },
     `${PLAYER_NAMES[player]} avancent d’une case.`,
   )
   return next
@@ -244,8 +268,8 @@ export function enterAnimal(
   facing: Direction,
 ): GameState {
   const player = assertCanPlay(state)
-  if (!isEdge(destination)) throw new Error('Un animal doit entrer par une case du bord.')
-  if (state.reserves[player] === 0) throw new Error('Vous n’avez plus d’animal en réserve.')
+  if (!isEdge(destination)) throw new IllegalActionError('Un animal doit entrer par une case du bord.')
+  if (state.reserves[player] === 0) throw new IllegalActionError('Vous n’avez plus d’animal en réserve.')
   assertOpeningAllowed(state, player, destination)
 
   const target = state.board[destination]
@@ -256,7 +280,7 @@ export function enterAnimal(
   if (target) {
     const inward = inwardDirection(destination)
     if (facing !== inward) {
-      throw new Error('Pour entrer en poussant, orientez votre animal vers l’intérieur du plateau.')
+      throw new IllegalActionError('Pour entrer en poussant, orientez votre animal vers l’intérieur du plateau.')
     }
     const stateWithReserveUsed = {
       ...state,
@@ -274,6 +298,7 @@ export function enterAnimal(
   const next = finishTurn(
     { ...state, board, reserves, winner },
     player,
+    { type: 'enter', to: destination, facing },
     `${PLAYER_NAMES[player]} entrent sur le plateau.`,
   )
   return next
@@ -287,14 +312,15 @@ export function rotateAnimal(
   const player = assertCanPlay(state)
   const animal = state.board[index]
   if (!animal || animal.kind !== 'animal' || animal.owner !== player) {
-    throw new Error('Sélectionnez un de vos animaux.')
+    throw new IllegalActionError('Sélectionnez un de vos animaux.')
   }
-  if (animal.facing === facing) throw new Error('Cet animal regarde déjà dans cette direction.')
+  if (animal.facing === facing) throw new IllegalActionError('Cet animal regarde déjà dans cette direction.')
   const board = [...state.board]
   board[index] = { ...animal, facing }
   return finishTurn(
     { ...state, board },
     player,
+    { type: 'rotate', at: index, facing },
     `${PLAYER_NAMES[player]} changent l’orientation d’un animal.`,
   )
 }
@@ -303,11 +329,11 @@ export function returnAnimal(state: GameState, index: number): GameState {
   const player = assertCanPlay(state)
   const animal = state.board[index]
   if (!animal || animal.kind !== 'animal' || animal.owner !== player) {
-    throw new Error('Sélectionnez un de vos animaux.')
+    throw new IllegalActionError('Sélectionnez un de vos animaux.')
   }
-  if (!isEdge(index)) throw new Error('Seul un animal placé sur le bord peut quitter le plateau.')
+  if (!isEdge(index)) throw new IllegalActionError('Seul un animal placé sur le bord peut quitter le plateau.')
   if (state.variants.oneReturnPerPlayer && state.returnsUsed[player] > 0) {
-    throw new Error('La variante autorise une seule sortie par joueur.')
+    throw new IllegalActionError('La variante autorise une seule sortie par joueur.')
   }
 
   const board = [...state.board]
@@ -315,8 +341,68 @@ export function returnAnimal(state: GameState, index: number): GameState {
   const next = finishTurn(
     { ...state, board, reserves: { ...state.reserves, [player]: state.reserves[player] + 1 } },
     player,
+    { type: 'return', at: index },
     `${PLAYER_NAMES[player]} récupèrent un animal en réserve.`,
   )
   next.returnsUsed[player] += 1
   return next
+}
+
+export function applyGameAction(state: GameState, action: GameAction): GameState {
+  switch (action.type) {
+    case 'enter':
+      return enterAnimal(state, action.to, action.facing)
+    case 'move':
+      return moveAnimal(state, action.from, action.to, action.facing)
+    case 'rotate':
+      return rotateAnimal(state, action.at, action.facing)
+    case 'return':
+      return returnAnimal(state, action.at)
+  }
+}
+
+export function getLegalActions(state: GameState): GameAction[] {
+  if (state.winner) return []
+  const actions: GameAction[] = []
+  const tryAdd = (action: GameAction): void => {
+    try {
+      applyGameAction(state, action)
+      actions.push(action)
+    } catch (error) {
+      if (!(error instanceof IllegalActionError)) throw error
+    }
+  }
+
+  if (state.reserves[state.turn] > 0) {
+    for (let destination = 0; destination < BOARD_CELLS; destination += 1) {
+      if (!isEdge(destination)) continue
+      if (state.board[destination]) {
+        tryAdd({ type: 'enter', to: destination, facing: inwardDirection(destination) })
+      } else {
+        for (const facing of DIRECTIONS) tryAdd({ type: 'enter', to: destination, facing })
+      }
+    }
+  }
+
+  for (let from = 0; from < BOARD_CELLS; from += 1) {
+    const piece = state.board[from]
+    if (piece?.kind !== 'animal' || piece.owner !== state.turn) continue
+
+    for (const facing of DIRECTIONS) {
+      if (facing !== piece.facing) tryAdd({ type: 'rotate', at: from, facing })
+    }
+    if (isEdge(from)) tryAdd({ type: 'return', at: from })
+
+    for (const direction of DIRECTIONS) {
+      const to = step(from, direction)
+      if (to === null) continue
+      if (state.board[to]) {
+        tryAdd({ type: 'move', from, to, facing: direction })
+      } else {
+        for (const facing of DIRECTIONS) tryAdd({ type: 'move', from, to, facing })
+      }
+    }
+  }
+
+  return actions
 }
