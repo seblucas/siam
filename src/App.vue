@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { actionDescription, chooseBotAction, type BotDifficulty } from './ai'
 import {
   BOARD_CELLS,
@@ -23,6 +23,7 @@ type Selection = { kind: 'animal'; index: number } | { kind: 'reserve' } | null
 type GameMode = 'local' | 'bot'
 
 const variants = ref<VariantOptions>({ openingSquares: false, oneReturnPerPlayer: false })
+const version = ref('dev')
 const game = ref<GameState>(createGame())
 const mode = ref<GameMode>('local')
 const difficulty = ref<BotDifficulty>('medium')
@@ -36,6 +37,18 @@ const moveTimings = ref<Array<{ player: Player; thinkingTimeMs: number }>>([])
 let botTurnToken = 0
 let botTimer: number | undefined
 let turnStartedAt = performance.now()
+
+onMounted(async () => {
+  try {
+    const response = await fetch(`${import.meta.env.BASE_URL}version.txt`)
+    if (!response.ok || response.headers.get('content-type')?.includes('text/html')) return
+
+    const releaseVersion = (await response.text()).trim()
+    if (releaseVersion) version.value = releaseVersion
+  } catch (error) {
+    console.error('Impossible de lire la version de l’application.', error)
+  }
+})
 
 const currentPlayer = computed(() => game.value.turn)
 const botPlayer = computed<Player>(() => humanPlayer.value === 'elephant' ? 'rhino' : 'elephant')
@@ -344,6 +357,7 @@ async function copyReplay(): Promise<void> {
       <a class="brand" href="#" @click.prevent="startNewGame">
         <span class="brand-mark">S</span>
         <span><strong>SIAM</strong><small>Le royaume des géants</small></span>
+        <span class="version-badge">v{{ version }}</span>
       </a>
       <button class="text-button" type="button" @click="startNewGame">Nouvelle partie ↗</button>
     </header>

@@ -20,7 +20,7 @@ npm run build
 
 ## CI et releases GitHub
 
-GitHub Actions exécute les tests et le build (qui inclut la vérification TypeScript) à chaque push et pull request. Pour publier une release, poussez un tag Git ; après réussite des vérifications, le workflow crée une GitHub Release avec `siam-build.zip`, qui contient le contenu du dossier `dist`.
+GitHub Actions exécute les tests et le build (qui inclut la vérification TypeScript) à chaque push et pull request. Pour publier une release, poussez un tag Git ; après réussite des vérifications, le workflow crée une GitHub Release avec `siam-build.zip`, qui contient le contenu du dossier `dist` et un `version.txt` avec le nom du tag. L’application affiche cette version près du titre ; sans fichier de version, elle affiche `dev`.
 
 ```sh
 git tag v1.0.0

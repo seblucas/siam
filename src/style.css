@@ -24,6 +24,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px 
 .brand strong, .brand small { display: block; }
 .brand strong { font-family: Georgia, serif; letter-spacing: .12em; font-size: 17px; }
 .brand small { margin-top: 1px; color: var(--muted); font-size: 10px; letter-spacing: .04em; }
+.version-badge { padding: 4px 7px; border: 1px solid var(--line); border-radius: 20px; color: var(--muted); font-size: 10px; }
 .text-button, .quiet-button { background: transparent; border: 0; color: var(--green-dark); cursor: pointer; font-weight: 600; }
 .text-button { font-size: 13px; }
 .intro { padding: 48px 0 32px; }
