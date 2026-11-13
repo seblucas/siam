@@ -525,16 +525,6 @@ export function chooseBotAction(
         reason: 'Je protège le bord contre une poussée qui laisserait un rocher à portée de sortie.',
       }
     }
-
-    const alternative = searchRanked.find(
-      ({ action }) => JSON.stringify(action) !== JSON.stringify(edgeDefense),
-    )
-    if (alternative) {
-      return {
-        action: alternative.action,
-        reason: 'Je choisis une autre défense : cet animal serait emporté par la poussée vers le bord.',
-      }
-    }
   }
 
   if (difficulty === 'hard' && !isUnderImmediateThreat) {

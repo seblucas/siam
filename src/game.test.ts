@@ -339,6 +339,43 @@ describe('Siam game rules', () => {
     }
   }, 60000)
 
+  it('chooses a real defense against the two-move threat after the ninth move', () => {
+    let state = createGame()
+    const replay = [
+      { type: 'enter', to: 2, facing: 'south' },
+      { type: 'enter', to: 1, facing: 'east' },
+      { type: 'enter', to: 2, facing: 'south' },
+      { type: 'enter', to: 23, facing: 'west' },
+      { type: 'move', from: 2, to: 7, facing: 'south' },
+      { type: 'enter', to: 10, facing: 'east' },
+      { type: 'enter', to: 14, facing: 'west' },
+      { type: 'enter', to: 1, facing: 'south' },
+      { type: 'enter', to: 21, facing: 'east' },
+    ] as const
+    for (const action of replay) state = applyGameAction(state, action)
+
+    const countForcedElephantWins = (position: GameState): number =>
+      getLegalActions(position).filter((elephantAction) => {
+        const afterElephant = applyGameAction(position, elephantAction)
+        if (afterElephant.winner === 'elephant') return true
+
+        return !getLegalActions(afterElephant).some((rhinoAction) => {
+          const afterRhino = applyGameAction(afterElephant, rhinoAction)
+          return afterRhino.winner === 'rhino' ||
+            !getLegalActions(afterRhino).some(
+              (reply) => applyGameAction(afterRhino, reply).winner === 'elephant',
+            )
+        })
+      }).length
+
+    const losingMove = { type: 'enter', to: 1, facing: 'south' } as const
+    expect(countForcedElephantWins(applyGameAction(state, losingMove))).toBeGreaterThan(0)
+
+    const choice = chooseBotAction(state, 'hard')
+    expect(choice).not.toBeNull()
+    expect(countForcedElephantWins(applyGameAction(state, choice!.action))).toBe(0)
+  }, 60000)
+
   it('checks the suggested D4 defense against the latest replay attack', () => {
     let state = createGame()
     const replay = [
