@@ -18,6 +18,15 @@ npm test
 npm run build
 ```
 
+## CI et releases GitHub
+
+GitHub Actions exécute les tests et le build (qui inclut la vérification TypeScript) à chaque push et pull request. Pour publier une release, poussez un tag Git ; après réussite des vérifications, le workflow crée une GitHub Release avec `siam-build.zip`, qui contient le contenu du dossier `dist`.
+
+```sh
+git tag v1.0.0
+git push origin v1.0.0
+```
+
 ## Règles intégrées
 
 - Plateau de 5 × 5, trois rochers au centre, cinq animaux par joueur ; les Éléphants commencent.
@@ -34,3 +43,7 @@ Le générateur d’actions légales et le bot sont définis dans `src/game.ts` 
 L’export JSON de la partie contient, pour chaque coup, `thinkingTimeMs` en millisecondes et les totaux par joueur dans `timing.totals`. Le temps humain est mesuré entre le début de son tour et le coup légal joué ; le temps du bot mesure uniquement le calcul de décision, hors délai d’animation.
 
 La référence des règles est `docs/siam.pdf`.
+
+## Licence
+
+Ce projet est distribué sous licence GNU General Public License, version 2 uniquement (GPL-2.0-only). Voir [LICENSE](LICENSE).
