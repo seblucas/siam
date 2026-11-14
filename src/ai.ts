@@ -389,7 +389,16 @@ function findPreemptiveEdgePushDefense(state: GameState, player: Player): GameAc
     })
   })
 
-  return safeActions
+  const occupiedEdgeEntries = safeActions.filter(
+    (action) => {
+      if (action.type !== 'enter') return false
+      const piece = state.board[action.to]
+      return piece?.kind === 'animal' && piece.owner === opponent
+    },
+  )
+  const candidates = occupiedEdgeEntries.length > 0 ? occupiedEdgeEntries : safeActions
+
+  return candidates
     .map((action) => ({ action, score: evaluate(applyGameAction(state, action), player) }))
     .sort((a, b) => b.score - a.score)[0]?.action ?? null
 }
@@ -530,9 +539,14 @@ export function chooseBotAction(
   if (difficulty === 'hard' && !isUnderImmediateThreat) {
     const preemptiveEdgeDefense = findPreemptiveEdgePushDefense(state, player)
     if (preemptiveEdgeDefense) {
+      const pushedPiece = preemptiveEdgeDefense.type === 'enter'
+        ? state.board[preemptiveEdgeDefense.to]
+        : null
       return {
         action: preemptiveEdgeDefense,
-        reason: 'Je prépare une défense contre le rocher que l’adversaire peut pousser vers le bord au prochain tour.',
+        reason: pushedPiece?.kind === 'animal' && pushedPiece.owner === opponent
+          ? 'Je repousse l’animal adverse du bord et occupe sa case pour bloquer une poussée.'
+          : 'Je prépare une défense contre le rocher que l’adversaire peut pousser vers le bord au prochain tour.',
       }
     }
   }
