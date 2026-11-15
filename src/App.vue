@@ -53,6 +53,10 @@ onMounted(async () => {
 const currentPlayer = computed(() => game.value.turn)
 const botPlayer = computed<Player>(() => humanPlayer.value === 'elephant' ? 'rhino' : 'elephant')
 const isHumanTurn = computed(() => mode.value === 'local' || currentPlayer.value === humanPlayer.value)
+const openingSquaresRestricted = computed(() =>
+  game.value.variants.openingSquares &&
+  Object.values(game.value.turnsTaken).some((turns) => turns < 2),
+)
 const recentMoves = computed(() => [...game.value.history].reverse())
 const legalEntryCells = computed(() => {
   if (selection.value?.kind !== 'reserve') return new Set<number>()
@@ -425,7 +429,7 @@ async function copyReplay(): Promise<void> {
                   'cell-rock': pieceAt(index - 1)?.kind === 'rock',
                   'cell-selected': isSelected(index - 1),
                   'cell-entry': isEntryCell(index - 1),
-                  'cell-marked': variants.openingSquares && isOpeningSquare(index - 1),
+                  'cell-marked': openingSquaresRestricted && isOpeningSquare(index - 1),
                 }"
                 type="button"
                 role="gridcell"
@@ -433,7 +437,7 @@ async function copyReplay(): Promise<void> {
                 :aria-label="cellLabel(index - 1)"
                 @click="selectCell(index - 1)"
               >
-                <span v-if="variants.openingSquares && isOpeningSquare(index - 1)" class="mark-x">×</span>
+                <span v-if="openingSquaresRestricted && isOpeningSquare(index - 1)" class="mark-x">×</span>
                 <span v-if="pieceAt(index - 1)?.kind === 'rock'" class="rock-piece" aria-hidden="true">
                   <svg class="rock-glyph" viewBox="0 0 48 40" focusable="false">
                     <path d="M3 32 14 15l7 8L31 7l14 25a3 3 0 0 1-3 4H6a3 3 0 0 1-3-4Z" />
